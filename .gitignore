@@ -5,3 +5,5 @@
 node_modules/
 dist/
 .venv/
+__pycache__/
+*.py[cod]
