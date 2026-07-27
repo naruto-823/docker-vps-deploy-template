@@ -1,0 +1,11 @@
+example.com {
+    root * /srv
+    try_files {path} /index.html
+    file_server
+    encode zstd gzip
+}
+
+api.example.com {
+    reverse_proxy api:8000
+    encode zstd gzip
+}

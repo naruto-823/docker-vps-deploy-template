@@ -1,0 +1,16 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: naruto-823/docker-vps-deploy-template/.github/workflows/reusable-deploy.yml@v1
+    with:
+      app_name: my-app
+      compose_file: compose.production.yml
+      health_url: https://api.example.com/api/health
+      test_command: pytest -q backend && npm ci --prefix frontend && npm run build --prefix frontend
+    secrets: inherit

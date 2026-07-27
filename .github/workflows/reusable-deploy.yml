@@ -1,0 +1,148 @@
+name: Reusable Docker VPS deploy
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: Lowercase application identifier
+        required: true
+        type: string
+      compose_file:
+        description: Production Compose file in the repository
+        default: compose.production.yml
+        type: string
+      health_url:
+        description: Public URL that must return HTTP 2xx
+        required: true
+        type: string
+      test_command:
+        description: Optional trusted shell command executed before deployment
+        default: ""
+        type: string
+      ssh_port:
+        default: 22
+        type: number
+    secrets:
+      DEPLOY_HOST:
+        required: true
+      DEPLOY_USER:
+        required: true
+      DEPLOY_SSH_KEY:
+        required: true
+      DEPLOY_KNOWN_HOSTS:
+        required: false
+      APP_ENV:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.app_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: ${{ inputs.app_name }}
+      COMPOSE_FILE: ${{ inputs.compose_file }}
+      HEALTH_URL: ${{ inputs.health_url }}
+      SSH_PORT: ${{ inputs.ssh_port }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          [[ "$APP_NAME" =~ ^[a-z0-9][a-z0-9-]{1,38}$ ]]
+          test -f "$COMPOSE_FILE"
+          [[ "$COMPOSE_FILE" != /* && "$COMPOSE_FILE" != *".."* ]]
+          [[ "$HEALTH_URL" == https://* ]]
+
+      - name: Run project checks
+        if: inputs.test_command != ''
+        env:
+          TEST_COMMAND: ${{ inputs.test_command }}
+        run: bash -euo pipefail -c "$TEST_COMMAND"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$SSH_PORT" -H "$DEPLOY_HOST" > ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Package release
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=.venv \
+            --exclude='*.env' \
+            -czf "$RUNNER_TEMP/release.tgz" .
+
+      - name: Upload release and environment
+        env:
+          APP_ENV: ${{ secrets.APP_ENV }}
+        run: |
+          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mkdir -p \"\$HOME/apps/$APP_NAME/uploads\" \"\$HOME/apps/$APP_NAME/shared\""
+          scp -P "$SSH_PORT" -i ~/.ssh/deploy_key "$RUNNER_TEMP/release.tgz" \
+            "$DEPLOY_USER@$DEPLOY_HOST:apps/$APP_NAME/uploads/${GITHUB_SHA}.tgz"
+          printf '%s' "$APP_ENV" | ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "umask 077; cat > \"\$HOME/apps/$APP_NAME/shared/app.env\""
+
+      - name: Start candidate release
+        run: |
+          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            'bash -se' -- "$APP_NAME" "$GITHUB_SHA" "$COMPOSE_FILE" <<'REMOTE'
+              set -euo pipefail
+              app_name="$1"
+              release_sha="$2"
+              compose_file="$3"
+              base="$HOME/apps/$app_name"
+              release="$base/releases/$release_sha"
+              mkdir -p "$release"
+              tar -xzf "$base/uploads/$release_sha.tgz" -C "$release"
+              cp "$base/shared/app.env" "$release/.env"
+              printf '\nIMAGE_TAG=%s\nCOMPOSE_PROJECT_NAME=%s\n' "$release_sha" "$app_name" >> "$release/.env"
+              chmod 600 "$release/.env"
+              cd "$release"
+              docker compose -f "$compose_file" --env-file .env build
+              docker compose -f "$compose_file" --env-file .env up -d --remove-orphans
+          REMOTE
+
+      - name: Verify candidate
+        run: curl --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 5 "$HEALTH_URL"
+
+      - name: Promote release
+        run: |
+          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "ln -sfn \"\$HOME/apps/$APP_NAME/releases/$GITHUB_SHA\" \"\$HOME/apps/$APP_NAME/current\" && rm -f \"\$HOME/apps/$APP_NAME/uploads/$GITHUB_SHA.tgz\""
+
+      - name: Roll back on failure
+        if: failure()
+        run: |
+          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            'bash -se' -- "$APP_NAME" "$COMPOSE_FILE" <<'REMOTE'
+              set -euo pipefail
+              app_name="$1"
+              compose_file="$2"
+              current="$HOME/apps/$app_name/current"
+              if [ -d "$current" ]; then
+                cd "$current"
+                docker compose -f "$compose_file" --env-file .env up -d --remove-orphans
+              fi
+              docker compose -p "$app_name" logs --tail=150 || true
+          REMOTE
