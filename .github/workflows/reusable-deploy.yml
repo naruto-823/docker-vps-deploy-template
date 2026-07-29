@@ -117,12 +117,16 @@ jobs:
 
       - name: Package release
         run: |
-          tar \
-            --exclude=.git \
-            --exclude=node_modules \
-            --exclude=.venv \
-            --exclude='*.env' \
-            -czf "$RUNNER_TEMP/release.tgz" .
+          if [ -n "$REGISTRY_IMAGE" ]; then
+            tar -czf "$RUNNER_TEMP/release.tgz" "$COMPOSE_FILE"
+          else
+            tar \
+              --exclude=.git \
+              --exclude=node_modules \
+              --exclude=.venv \
+              --exclude='*.env' \
+              -czf "$RUNNER_TEMP/release.tgz" .
+          fi
 
       - name: Upload release and environment
         env:
