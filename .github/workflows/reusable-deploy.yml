@@ -130,15 +130,15 @@ jobs:
           GHCR_TOKEN: ${{ github.token }}
           GHCR_USER: ${{ github.actor }}
         run: |
-          ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+          timeout 60s ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
             "mkdir -p \"\$HOME/apps/$APP_NAME/uploads\" \"\$HOME/apps/$APP_NAME/shared\""
-          scp -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -P "$SSH_PORT" -i ~/.ssh/deploy_key "$RUNNER_TEMP/release.tgz" \
+          timeout 180s scp -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -P "$SSH_PORT" -i ~/.ssh/deploy_key "$RUNNER_TEMP/release.tgz" \
             "$DEPLOY_USER@$DEPLOY_HOST:apps/$APP_NAME/uploads/${GITHUB_SHA}.tgz"
-          printf '%s' "$APP_ENV" | ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key \
+          printf '%s' "$APP_ENV" | timeout 60s ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "umask 077; cat > \"\$HOME/apps/$APP_NAME/shared/app.env\""
           if [ -n "$REGISTRY_IMAGE" ]; then
-            printf '%s' "$GHCR_TOKEN" | ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key \
+            printf '%s' "$GHCR_TOKEN" | timeout 60s ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key \
               "$DEPLOY_USER@$DEPLOY_HOST" \
               "docker login ghcr.io -u '$GHCR_USER' --password-stdin >/dev/null"
           fi
