@@ -89,12 +89,18 @@ GitHub 保存 Secret 后不会再次显示原文。
 jobs:
   deploy:
     uses: naruto-823/docker-vps-deploy-template/.github/workflows/reusable-deploy.yml@v1
-    with:
-      app_name: my-app
-      compose_file: compose.production.yml
-      health_url: https://api.example.com/api/health
-    secrets: inherit
+      with:
+        app_name: my-app
+        compose_file: compose.production.yml
+        health_url: https://api.example.com/api/health
+        # 推荐：镜像在 GitHub Runner 构建，VPS 只 pull，避免小规格服务器构建时 OOM。
+        registry_image: ghcr.io/naruto-823/my-app
+      secrets: inherit
 ```
+
+设置 `registry_image` 后，Workflow 使用 Buildx 在 GitHub Runner 构建并推送
+`${registry_image}:${github.sha}`，目标 VPS 只执行 `docker compose pull/up`。
+不设置时继续兼容原有的 VPS 本机构建模式。
 
 生产项目应固定到发布标签（如 `@v1`）或完整 commit SHA，不建议引用浮动分支。
 
