@@ -148,8 +148,9 @@ jobs:
           fi
 
       - name: Start candidate release
+        timeout-minutes: 15
         run: |
-          ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+          timeout 840s ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
             'bash -se' -- "$APP_NAME" "$GITHUB_SHA" "$COMPOSE_FILE" "$REGISTRY_IMAGE" <<'REMOTE'
               set -euo pipefail
               app_name="$1"
@@ -165,11 +166,23 @@ jobs:
               chmod 600 "$release/.env"
               cd "$release"
               if [ -n "$registry_image" ]; then
-                docker compose -f "$compose_file" --env-file .env pull
+                pull_ok=false
+                for attempt in 1 2 3; do
+                  if timeout 240s docker compose -f "$compose_file" --env-file .env pull; then
+                    pull_ok=true
+                    break
+                  fi
+                  echo "Image pull attempt $attempt failed" >&2
+                  sleep $((attempt * 5))
+                done
+                if [ "$pull_ok" != true ]; then
+                  echo "Image pull failed after 3 attempts" >&2
+                  exit 1
+                fi
               else
-                docker compose -f "$compose_file" --env-file .env build
+                timeout 720s docker compose -f "$compose_file" --env-file .env build
               fi
-              docker compose -f "$compose_file" --env-file .env up -d --remove-orphans
+              timeout 120s docker compose -f "$compose_file" --env-file .env up -d --remove-orphans
           REMOTE
 
       - name: Verify candidate
