@@ -111,7 +111,7 @@ jobs:
           if [ -n "$KNOWN_HOSTS" ]; then
             printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           else
-            ssh-keyscan -p "$SSH_PORT" -H "$DEPLOY_HOST" > ~/.ssh/known_hosts
+            timeout 20 ssh-keyscan -T 15 -p "$SSH_PORT" -H "$DEPLOY_HOST" > ~/.ssh/known_hosts
           fi
           chmod 600 ~/.ssh/known_hosts
 
@@ -130,22 +130,22 @@ jobs:
           GHCR_TOKEN: ${{ github.token }}
           GHCR_USER: ${{ github.actor }}
         run: |
-          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+          ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
             "mkdir -p \"\$HOME/apps/$APP_NAME/uploads\" \"\$HOME/apps/$APP_NAME/shared\""
-          scp -P "$SSH_PORT" -i ~/.ssh/deploy_key "$RUNNER_TEMP/release.tgz" \
+          scp -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -P "$SSH_PORT" -i ~/.ssh/deploy_key "$RUNNER_TEMP/release.tgz" \
             "$DEPLOY_USER@$DEPLOY_HOST:apps/$APP_NAME/uploads/${GITHUB_SHA}.tgz"
-          printf '%s' "$APP_ENV" | ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key \
+          printf '%s' "$APP_ENV" | ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "umask 077; cat > \"\$HOME/apps/$APP_NAME/shared/app.env\""
           if [ -n "$REGISTRY_IMAGE" ]; then
-            printf '%s' "$GHCR_TOKEN" | ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key \
+            printf '%s' "$GHCR_TOKEN" | ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key \
               "$DEPLOY_USER@$DEPLOY_HOST" \
               "docker login ghcr.io -u '$GHCR_USER' --password-stdin >/dev/null"
           fi
 
       - name: Start candidate release
         run: |
-          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+          ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
             'bash -se' -- "$APP_NAME" "$GITHUB_SHA" "$COMPOSE_FILE" "$REGISTRY_IMAGE" <<'REMOTE'
               set -euo pipefail
               app_name="$1"
@@ -173,13 +173,13 @@ jobs:
 
       - name: Promote release
         run: |
-          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+          ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
             "ln -sfn \"\$HOME/apps/$APP_NAME/releases/$GITHUB_SHA\" \"\$HOME/apps/$APP_NAME/current\" && rm -f \"\$HOME/apps/$APP_NAME/uploads/$GITHUB_SHA.tgz\""
 
       - name: Roll back on failure
         if: failure()
         run: |
-          ssh -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+          ssh -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -p "$SSH_PORT" -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
             'bash -se' -- "$APP_NAME" "$COMPOSE_FILE" <<'REMOTE'
               set -euo pipefail
               app_name="$1"
